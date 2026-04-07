@@ -1,0 +1,14 @@
+.git
+bin/
+.github/
+.env
+.env.local
+*.md
+LICENSE
+Makefile
+packaging/
+scripts/
+migrations/
+.idea/
+.vscode/
+.DS_Store

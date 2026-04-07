@@ -1,0 +1,31 @@
+[Unit]
+Description=Kochab Agent - Infrastructure monitoring daemon
+Documentation=https://kochab.ai/docs/agent
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/kochab-agent
+WatchdogSec=30
+Restart=on-failure
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+ReadWritePaths=/var/lib/kochab-agent
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=128M
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kochab-agent
+
+[Install]
+WantedBy=multi-user.target

@@ -122,7 +122,7 @@ func (c *ReportClient) doReport(ctx context.Context, url string, body []byte) er
 	if err != nil {
 		return fmt.Errorf("network error: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusOK {
 		return nil

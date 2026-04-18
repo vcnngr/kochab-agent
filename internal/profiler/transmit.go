@@ -94,7 +94,7 @@ func doTransmit(url, agentID, agentSecret string, body []byte) error {
 	if err != nil {
 		return fmt.Errorf("network error: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))

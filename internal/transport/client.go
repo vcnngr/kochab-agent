@@ -87,7 +87,7 @@ func (c *PollClient) Poll(ctx context.Context) (*protocol.TaskPayload, error) {
 	if err != nil {
 		return nil, fmt.Errorf("poll request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	switch resp.StatusCode {
 	case http.StatusNoContent:

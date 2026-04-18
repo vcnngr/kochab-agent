@@ -19,7 +19,9 @@ func TestRunEnrollment_HappyPath(t *testing.T) {
 		}
 
 		var req protocol.EnrollmentRequest
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
 
 		if req.EnrollmentToken == "" {
 			t.Fatal("missing enrollment token")

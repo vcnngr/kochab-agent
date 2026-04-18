@@ -30,7 +30,7 @@ func TestReportResult_200_Accepted(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"accepted": true}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"accepted": true}})
 	}))
 	defer srv.Close()
 
@@ -55,7 +55,7 @@ func TestReportResult_RetryOn500(t *testing.T) {
 		}
 		// Succeed on 3rd attempt.
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"accepted": true}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"accepted": true}})
 	}))
 	defer srv.Close()
 

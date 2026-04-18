@@ -36,7 +36,7 @@ func makeTaskServer(t *testing.T, statusCode int, task *protocol.TaskPayload) *h
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(statusCode)
 		if task != nil {
-			json.NewEncoder(w).Encode(taskResponseWrapper{Data: *task})
+			_ = json.NewEncoder(w).Encode(taskResponseWrapper{Data: *task})
 		}
 	}))
 }
@@ -124,7 +124,7 @@ func TestPollClient_AuthHeadersPresent(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(t, srv.URL, "my-agent-id", "my-secret")
-	client.Poll(context.Background())
+	_, _ = client.Poll(context.Background())
 
 	if gotAgentID != "my-agent-id" {
 		t.Errorf("X-Agent-ID = %q, want my-agent-id", gotAgentID)
@@ -143,7 +143,7 @@ func TestPollClient_NoTimestampHeader(t *testing.T) {
 	defer srv.Close()
 
 	client := newTestClient(t, srv.URL, "agent-01", "secret")
-	client.Poll(context.Background())
+	_, _ = client.Poll(context.Background())
 
 	if gotTimestamp != "" {
 		t.Errorf("X-Agent-Timestamp should be absent (deferred W0), got %q", gotTimestamp)

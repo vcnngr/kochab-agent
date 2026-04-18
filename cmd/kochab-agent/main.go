@@ -164,13 +164,8 @@ func run(ctx context.Context, creds *enrollment.Credentials, platformPubKey ed25
 
 	// Notify systemd watchdog while in loop — RunLoop blocks until ctx cancelled.
 	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				_, _ = daemon.SdNotify(false, daemon.SdNotifyStopping)
-				return
-			}
-		}
+		<-ctx.Done()
+		_, _ = daemon.SdNotify(false, daemon.SdNotifyStopping)
 	}()
 
 	pollClient.RunLoop(ctx, verifyFn, executeFn, reportFn)

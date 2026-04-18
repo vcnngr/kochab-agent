@@ -59,7 +59,9 @@ func TestLoadCredentials_NotFound(t *testing.T) {
 func TestLoadCredentials_InvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.key")
-	os.WriteFile(path, []byte("not json"), 0600)
+	if err := os.WriteFile(path, []byte("not json"), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := LoadCredentialsFrom(path)
 	if err == nil {
@@ -70,7 +72,9 @@ func TestLoadCredentials_InvalidJSON(t *testing.T) {
 func TestLoadCredentials_MissingFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "agent.key")
-	os.WriteFile(path, []byte(`{"agent_id":"","agent_secret":"","platform_url":"x"}`), 0600)
+	if err := os.WriteFile(path, []byte(`{"agent_id":"","agent_secret":"","platform_url":"x"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
 
 	_, err := LoadCredentialsFrom(path)
 	if err == nil {

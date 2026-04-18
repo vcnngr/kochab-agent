@@ -26,7 +26,9 @@ func TestTransmitProfile_HappyPath(t *testing.T) {
 		}
 
 		var payload protocol.ProfilePayload
-		json.NewDecoder(r.Body).Decode(&payload)
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode payload: %v", err)
+		}
 		if payload.Profile.Hostname != "vortex.local" {
 			t.Fatalf("unexpected hostname: %s", payload.Profile.Hostname)
 		}

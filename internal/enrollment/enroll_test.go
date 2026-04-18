@@ -31,7 +31,7 @@ func TestRunEnrollment_HappyPath(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data": protocol.EnrollmentResponse{
 				AgentID:        "agent-123",
 				AgentSecret:    "secret-abc",
@@ -63,7 +63,7 @@ func TestRunEnrollment_HappyPath(t *testing.T) {
 func TestRunEnrollment_TokenExpired(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"error": map[string]string{"code": "ENROLLMENT_TOKEN_EXPIRED", "message": "Token scaduto"},
 			"meta":  map[string]string{"request_id": "test"},
 		})

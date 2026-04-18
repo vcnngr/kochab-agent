@@ -34,7 +34,7 @@ func TestTransmitProfile_HappyPath(t *testing.T) {
 		}
 
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "accepted"})
 	}))
 	defer ts.Close()
 

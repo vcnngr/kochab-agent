@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -151,9 +152,9 @@ func TestPollClient_NoTimestampHeader(t *testing.T) {
 }
 
 func TestRunLoop_204Reconnects(t *testing.T) {
-	callCount := 0
+	var callCount atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		callCount++
+		callCount.Add(1)
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
@@ -172,7 +173,7 @@ func TestRunLoop_204Reconnects(t *testing.T) {
 	client.RunLoop(ctx, noopVerify, noopExecute, noopReport)
 
 	// With 204s, the loop reconnects immediately — expect multiple calls.
-	if callCount < 2 {
-		t.Errorf("expected multiple poll calls after 204, got %d", callCount)
+	if got := callCount.Load(); got < 2 {
+		t.Errorf("expected multiple poll calls after 204, got %d", got)
 	}
 }

@@ -43,7 +43,7 @@ func RunEnrollment(token, platformURL, fingerprint, hostname string, osInfo prot
 	if err != nil {
 		return nil, fmt.Errorf("enrollment request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {

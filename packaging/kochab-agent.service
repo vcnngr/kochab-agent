@@ -7,16 +7,16 @@ Wants=network-online.target
 [Service]
 Type=notify
 ExecStart=/usr/local/bin/kochab-agent
-WatchdogSec=30
+WatchdogSec=120
 Restart=on-failure
 RestartSec=5
 
 # Security hardening
-NoNewPrivileges=yes
+NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=read-only
-PrivateTmp=yes
-ReadWritePaths=/var/lib/kochab-agent
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/etc/kochab
 
 # Resource limits
 LimitNOFILE=65536

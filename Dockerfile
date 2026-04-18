@@ -13,10 +13,12 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o /build/kochab-agent \
     ./cmd/kochab-agent
 
-FROM gcr.io/distroless/static-debian12:nonroot
+# Scratch for minimal image — binary is fully static
+FROM scratch
 
 COPY --from=builder /build/kochab-agent /usr/local/bin/kochab-agent
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 
-USER nonroot:nonroot
+USER 65534:65534
 
 ENTRYPOINT ["/usr/local/bin/kochab-agent"]

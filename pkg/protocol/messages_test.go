@@ -6,28 +6,6 @@ import (
 	"time"
 )
 
-func TestTaskType_Valid(t *testing.T) {
-	tests := []struct {
-		name string
-		tt   TaskType
-		want bool
-	}{
-		{"audit", TaskTypeAudit, true},
-		{"heartbeat", TaskTypeHeartbeat, true},
-		{"profile", TaskTypeProfile, true},
-		{"exec", TaskTypeExec, true},
-		{"unknown", TaskType("unknown"), false},
-		{"empty", TaskType(""), false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := tc.tt.Valid(); got != tc.want {
-				t.Errorf("TaskType(%q).Valid() = %v, want %v", tc.tt, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestRunStatus_Valid(t *testing.T) {
 	tests := []struct {
 		name string
@@ -92,14 +70,13 @@ func TestFindingStatus_Valid(t *testing.T) {
 
 func TestTaskPayload_JSON(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
+	payload := json.RawMessage(`{"rule_codes":["SSH-001","FW-002"]}`)
 	task := TaskPayload{
 		TaskID:    "task-001",
-		Type:      TaskTypeAudit,
-		Priority:  1,
-		Payload:   map[string]any{"rule_codes": []any{"SSH-001", "FW-002"}},
-		Signature: "ed25519:abc123",
-		IssuedAt:  now,
-		ExpiresAt: now.Add(1 * time.Hour),
+		TaskType:  string(TaskTypeAudit),
+		Payload:   payload,
+		Timestamp: now,
+		Signature: "ed25519sig==",
 	}
 
 	data, err := json.Marshal(task)
@@ -115,20 +92,66 @@ func TestTaskPayload_JSON(t *testing.T) {
 	if decoded.TaskID != task.TaskID {
 		t.Errorf("TaskID = %q, want %q", decoded.TaskID, task.TaskID)
 	}
-	if decoded.Type != task.Type {
-		t.Errorf("Type = %q, want %q", decoded.Type, task.Type)
-	}
-	if decoded.Priority != task.Priority {
-		t.Errorf("Priority = %d, want %d", decoded.Priority, task.Priority)
+	if decoded.TaskType != task.TaskType {
+		t.Errorf("TaskType = %q, want %q", decoded.TaskType, task.TaskType)
 	}
 	if decoded.Signature != task.Signature {
 		t.Errorf("Signature = %q, want %q", decoded.Signature, task.Signature)
 	}
-	if !decoded.IssuedAt.Equal(task.IssuedAt) {
-		t.Errorf("IssuedAt = %v, want %v", decoded.IssuedAt, task.IssuedAt)
+	if !decoded.Timestamp.Equal(task.Timestamp) {
+		t.Errorf("Timestamp = %v, want %v", decoded.Timestamp, task.Timestamp)
 	}
-	if !decoded.ExpiresAt.Equal(task.ExpiresAt) {
-		t.Errorf("ExpiresAt = %v, want %v", decoded.ExpiresAt, task.ExpiresAt)
+	if string(decoded.Payload) != string(task.Payload) {
+		t.Errorf("Payload = %s, want %s", decoded.Payload, task.Payload)
+	}
+}
+
+func TestTaskResult_JSON(t *testing.T) {
+	result := TaskResult{
+		TaskID: "task-001",
+		Status: "completed",
+		Result: json.RawMessage(`{"ok":true}`),
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal TaskResult: %v", err)
+	}
+
+	var decoded TaskResult
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("Unmarshal TaskResult: %v", err)
+	}
+
+	if decoded.TaskID != result.TaskID {
+		t.Errorf("TaskID = %q, want %q", decoded.TaskID, result.TaskID)
+	}
+	if decoded.Status != result.Status {
+		t.Errorf("Status = %q, want %q", decoded.Status, result.Status)
+	}
+}
+
+func TestTaskResult_ErrorOmitEmpty(t *testing.T) {
+	result := TaskResult{
+		TaskID: "task-001",
+		Status: "completed",
+	}
+
+	data, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Marshal TaskResult: %v", err)
+	}
+
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal raw: %v", err)
+	}
+
+	if _, ok := raw["error"]; ok {
+		t.Error("error field should be omitted when empty")
+	}
+	if _, ok := raw["result"]; ok {
+		t.Error("result field should be omitted when nil")
 	}
 }
 
@@ -179,42 +202,6 @@ func TestAuditResult_JSON(t *testing.T) {
 	}
 	if !decoded.StartedAt.Equal(result.StartedAt) {
 		t.Errorf("StartedAt = %v, want %v", decoded.StartedAt, result.StartedAt)
-	}
-	if !decoded.CompletedAt.Equal(result.CompletedAt) {
-		t.Errorf("CompletedAt = %v, want %v", decoded.CompletedAt, result.CompletedAt)
-	}
-}
-
-func TestHeartbeatResponse_JSON(t *testing.T) {
-	now := time.Now().UTC().Truncate(time.Second)
-	resp := HeartbeatResponse{
-		Acknowledged: true,
-		ServerTime:   now,
-		PollInterval: 60,
-		Tasks:        nil,
-	}
-
-	data, err := json.Marshal(resp)
-	if err != nil {
-		t.Fatalf("Marshal HeartbeatResponse: %v", err)
-	}
-
-	var decoded HeartbeatResponse
-	if err := json.Unmarshal(data, &decoded); err != nil {
-		t.Fatalf("Unmarshal HeartbeatResponse: %v", err)
-	}
-
-	if !decoded.Acknowledged {
-		t.Error("Acknowledged = false, want true")
-	}
-	if decoded.PollInterval != 60 {
-		t.Errorf("PollInterval = %d, want 60", decoded.PollInterval)
-	}
-	if decoded.Tasks != nil {
-		t.Errorf("Tasks = %v, want nil (omitempty)", decoded.Tasks)
-	}
-	if !decoded.ServerTime.Equal(resp.ServerTime) {
-		t.Errorf("ServerTime = %v, want %v", decoded.ServerTime, resp.ServerTime)
 	}
 }
 

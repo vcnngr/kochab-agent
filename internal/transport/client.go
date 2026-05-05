@@ -200,7 +200,7 @@ func (c *PollClient) setAuthHeaders(req *http.Request, body []byte) {
 
 	req.Header.Set("X-Agent-ID", c.agentID)
 	req.Header.Set("X-Agent-Auth", authMAC)
-	// X-Agent-Timestamp removed per deferred W0 from review 2-1.
+	req.Header.Set("X-Agent-Timestamp", time.Now().UTC().Format(time.RFC3339))
 }
 
 // fatalError marks non-retryable failures (4xx auth errors).

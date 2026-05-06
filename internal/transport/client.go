@@ -109,6 +109,10 @@ func (c *PollClient) Poll(ctx context.Context) (*protocol.TaskPayload, error) {
 		}
 		return &wrapper.Data, nil
 
+	case http.StatusGone:
+		// Platform has soft-deleted the node — stop polling immediately.
+		return nil, ErrNodeDecommissioned
+
 	case http.StatusUnauthorized, http.StatusForbidden:
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		slog.Error("poll_auth_failed", "status", resp.StatusCode, "body", string(body))
@@ -121,32 +125,37 @@ func (c *PollClient) Poll(ctx context.Context) (*protocol.TaskPayload, error) {
 }
 
 // RunLoop runs the poll → verify → execute → report cycle until ctx is cancelled.
+// Returns ErrNodeDecommissioned if the platform responds 410 GONE; nil on normal shutdown.
 // verifyFn and executeFn are injected to break import cycles.
 func (c *PollClient) RunLoop(
 	ctx context.Context,
 	verifyFn func(*protocol.TaskPayload) error,
 	executeFn func(context.Context, *protocol.TaskPayload) (*protocol.TaskResult, error),
 	reportFn func(context.Context, *protocol.TaskResult) error,
-) {
+) error {
 	slog.Info("poll_loop_started", "platform_url", c.platformURL, "agent_id", c.agentID)
 	backoff := pollInitialBackoff
 
 	for {
 		if ctx.Err() != nil {
 			slog.Info("poll_loop_stopped", "reason", "context_cancelled")
-			return
+			return nil
 		}
 
 		task, err := c.Poll(ctx)
 		if err != nil {
+			if IsNodeDecommissioned(err) {
+				slog.Warn("poll_loop_node_decommissioned", "msg", "node rimosso dalla piattaforma — poll loop terminato")
+				return ErrNodeDecommissioned
+			}
 			if isFatal(err) {
 				slog.Error("poll_loop_fatal_error", "error", err)
-				return
+				return nil
 			}
 			slog.Warn("poll_error_retrying", "error", err, "backoff", backoff)
 			select {
 			case <-ctx.Done():
-				return
+				return nil
 			case <-time.After(backoff):
 				backoff = min(backoff*2, 60*time.Second)
 				continue

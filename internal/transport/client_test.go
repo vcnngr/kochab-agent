@@ -135,7 +135,7 @@ func TestPollClient_AuthHeadersPresent(t *testing.T) {
 	}
 }
 
-func TestPollClient_NoTimestampHeader(t *testing.T) {
+func TestPollClient_TimestampHeader(t *testing.T) {
 	var gotTimestamp string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotTimestamp = r.Header.Get("X-Agent-Timestamp")
@@ -146,8 +146,12 @@ func TestPollClient_NoTimestampHeader(t *testing.T) {
 	client := newTestClient(t, srv.URL, "agent-01", "secret")
 	_, _ = client.Poll(context.Background())
 
-	if gotTimestamp != "" {
-		t.Errorf("X-Agent-Timestamp should be absent (deferred W0), got %q", gotTimestamp)
+	if gotTimestamp == "" {
+		t.Error("X-Agent-Timestamp must be present (W0 closed: timestamp reintroduced in commit 968aa3a)")
+	}
+	// Must be valid RFC3339.
+	if _, err := time.Parse(time.RFC3339, gotTimestamp); err != nil {
+		t.Errorf("X-Agent-Timestamp %q is not RFC3339: %v", gotTimestamp, err)
 	}
 }
 

@@ -38,6 +38,10 @@ Thumbs.db
 # Build artifacts
 /dist/
 
-# Debian packaging
-packaging/debian/usr/local/bin/kochab-agent
+# Debian packaging — build target dirs popolate dal Makefile target deb
+packaging/debian/usr/
+packaging/debian/etc/
 *.deb
+
+# Local root binary (go build cmd/kochab-agent senza -o)
+/kochab-agent

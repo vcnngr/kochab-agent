@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+# Only stop/disable on actual removal. During upgrade, dpkg invokes
+# `prerm upgrade <new-version>`: keep the unit enabled so the new postinst
+# can resume it without manual intervention if the host reboots mid-upgrade.
+case "$1" in
+    remove|deconfigure)
+        systemctl stop kochab-agent || true
+        systemctl disable kochab-agent || true
+        ;;
+    upgrade|failed-upgrade)
+        # leave the unit enabled; new package's postinst will replace files
+        ;;
+esac
+
+exit 0

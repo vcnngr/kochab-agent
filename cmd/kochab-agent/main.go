@@ -385,7 +385,12 @@ func runUninstall() error {
 	runStep("remove unit", func() error {
 		return os.Remove("/etc/systemd/system/kochab-agent.service")
 	})
-	runStep("remove /etc/kochab", func() error { return os.RemoveAll("/etc/kochab") })
+	runStep("remove /etc/kochab", func() error {
+		if _, statErr := os.Stat(decommissionedFlag); statErr == nil {
+			slog.Info("decommissioned_flag_removed_during_uninstall", "path", decommissionedFlag)
+		}
+		return os.RemoveAll("/etc/kochab")
+	})
 	runStep("systemctl daemon-reload", func() error {
 		return exec.Command("systemctl", "daemon-reload").Run()
 	})

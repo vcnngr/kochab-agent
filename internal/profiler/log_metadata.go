@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/kochab-ai/kochab-agent/pkg/protocol"
@@ -26,10 +27,20 @@ func CollectLogMetadata(ctx context.Context) protocol.LogMetadataInfo {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
+	var (
+		ssh, postfix, fail2ban int
+		wg                     sync.WaitGroup
+	)
+	wg.Add(3)
+	go func() { defer wg.Done(); ssh = countLogLines(ctx, "/var/log/auth.log", "sshd") }()
+	go func() { defer wg.Done(); postfix = countLogLines(ctx, "/var/log/mail.log", "postfix") }()
+	go func() { defer wg.Done(); fail2ban = countLogLines(ctx, "/var/log/fail2ban.log", "") }()
+	wg.Wait()
+
 	return protocol.LogMetadataInfo{
-		SSHLogCount:      countLogLines(ctx, "/var/log/auth.log", "sshd"),
-		PostfixLogCount:  countLogLines(ctx, "/var/log/mail.log", "postfix"),
-		Fail2banLogCount: countLogLines(ctx, "/var/log/fail2ban.log", ""),
+		SSHLogCount:      ssh,
+		PostfixLogCount:  postfix,
+		Fail2banLogCount: fail2ban,
 	}
 }
 

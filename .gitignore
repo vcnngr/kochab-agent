@@ -37,3 +37,7 @@ Thumbs.db
 
 # Build artifacts
 /dist/
+
+# Debian packaging
+packaging/debian/usr/local/bin/kochab-agent
+*.deb

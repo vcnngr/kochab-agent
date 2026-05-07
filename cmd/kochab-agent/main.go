@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -92,6 +93,13 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx, creds, platformPubKey); err != nil {
+		// 410 GONE → exit 70 (EX_SOFTWARE) so the operator can distinguish
+		// decommissioning from generic agent failure. Flag was persisted in run();
+		// systemd restarts and the next startup short-circuits with Exit(0).
+		if transport.IsNodeDecommissioned(err) {
+			slog.Warn("agent_exit_decommissioned", "code", 70)
+			os.Exit(70)
+		}
 		slog.Error("agent exited with error", "error", err)
 		os.Exit(1)
 	}
@@ -149,7 +157,8 @@ const (
 )
 
 // writeDecommissionedFlag atomically creates the decommissioned sentinel file.
-// tmp → fsync → rename ensures a crash mid-write leaves no partial file.
+// tmp → fsync → rename → dir-fsync ensures durability across crashes.
+// Falls back to a direct write if rename fails (e.g. cross-device).
 func writeDecommissionedFlag() {
 	f, err := os.OpenFile(decommissionedFlagTmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
@@ -162,6 +171,19 @@ func writeDecommissionedFlag() {
 	_ = f.Close()
 	if renameErr := os.Rename(decommissionedFlagTmp, decommissionedFlag); renameErr != nil {
 		slog.Warn("decommissioned_flag_rename_failed", "error", renameErr)
+		// Fallback: direct write without atomic rename.
+		if df, werr := os.OpenFile(decommissionedFlag, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600); werr == nil {
+			_ = df.Sync()
+			_ = df.Close()
+		} else {
+			slog.Error("decommissioned_flag_write_failed", "error", werr)
+			return
+		}
+	}
+	// Sync the containing directory so the rename is visible after a crash.
+	if dirF, dirErr := os.Open(filepath.Dir(decommissionedFlag)); dirErr == nil {
+		_ = dirF.Sync()
+		_ = dirF.Close()
 	}
 }
 
@@ -169,8 +191,8 @@ func run(ctx context.Context, creds *enrollment.Credentials, platformPubKey ed25
 	// 6.3 — refuse to start if the platform has already decommissioned this node.
 	if _, err := os.Stat(decommissionedFlag); err == nil {
 		slog.Warn("node_decommissioned_flag_exists", "path", decommissionedFlag,
-			"msg", "nodo rimosso dalla piattaforma — avvio bloccato")
-		os.Exit(70)
+			"msg", "nodo rimosso dalla piattaforma — avvio bloccato. Usa --uninstall per rimuovere l'agent.")
+		os.Exit(0) // clean exit: systemd must not restart a decommissioned agent
 	}
 
 	if !strings.HasPrefix(creds.PlatformURL, "https://") {
@@ -254,13 +276,13 @@ func run(ctx context.Context, creds *enrollment.Credentials, platformPubKey ed25
 	}
 
 	slog.Info("entering poll loop")
-	if loopErr := pollClient.RunLoop(ctx, verifyFn, executeFn, reportFn); transport.IsNodeDecommissioned(loopErr) {
-		// 6.2 — platform sent 410 GONE: persist flag so restarts abort immediately.
-		slog.Warn("node_decommissioned", "msg", "piattaforma ha rimosso il nodo — scrittura flag e uscita")
+	loopErr := pollClient.RunLoop(ctx, verifyFn, executeFn, reportFn)
+	if transport.IsNodeDecommissioned(loopErr) {
+		// 6.2 — platform sent 410 GONE: persist flag so next start aborts cleanly.
+		slog.Warn("node_decommissioned", "msg", "Il nodo è stato rimosso dalla piattaforma. Esegui `kochab-agent --uninstall` per rimuovere l'agent locale.")
 		writeDecommissionedFlag()
-		os.Exit(70)
 	}
-	return nil
+	return loopErr
 }
 
 // drainLoop empties the result buffer after the agent enters the poll loop.
@@ -377,17 +399,25 @@ func runUninstall() error {
 }
 
 // waitServiceInactive polls `systemctl is-active --quiet` until it reports
-// not-active or timeout elapses. Exit code 0 from is-active means the unit
-// is currently active; non-zero means inactive/failed/unknown.
+// not-active or timeout elapses. Uses CommandContext so a hung systemctl
+// subprocess cannot block uninstall beyond the remaining deadline.
 func waitServiceInactive(unit string, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
+	const checkTimeout = 2 * time.Second
 	for {
-		err := exec.Command("systemctl", "is-active", "--quiet", unit).Run()
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		ctxTimeout := checkTimeout
+		if remaining < ctxTimeout {
+			ctxTimeout = remaining
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), ctxTimeout)
+		err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run()
+		cancel()
 		if err != nil {
 			return true // non-zero exit ⇒ not active
-		}
-		if time.Now().After(deadline) {
-			return false
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

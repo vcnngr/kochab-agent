@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Kochab Agent Uninstaller
+# NOTE: il metodo preferito è `sudo kochab-agent --uninstall` (Story 2.4).
+# Questo script resta come fallback per installazioni legacy / debug manuale.
 set -euo pipefail
 
 BINARY_NAME="kochab-agent"

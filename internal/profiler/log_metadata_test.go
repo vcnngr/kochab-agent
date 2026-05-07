@@ -2,6 +2,7 @@ package profiler
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
 	"testing"
 	"time"
@@ -45,7 +46,7 @@ func TestCollectLogMetadata_FileMissing(t *testing.T) {
 	defer func() { LogCommandRunner = orig }()
 
 	LogCommandRunner = func(_ context.Context, name string, args ...string) ([]byte, error) {
-		return nil, &exec.ExitError{ProcessState: nil}
+		return nil, fmt.Errorf("open %s: no such file or directory", args[len(args)-1])
 	}
 
 	info := CollectLogMetadata(context.Background())

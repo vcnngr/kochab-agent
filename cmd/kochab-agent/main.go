@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/base64"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -27,6 +28,10 @@ import (
 
 // version is set at build time via -ldflags "-X main.version=..."
 var version = "0.1.0"
+
+// errNodeAlreadyDecommissioned is returned by run() when the decommissioned sentinel
+// file exists on startup. main() maps this to os.Exit(0) — systemd must not restart.
+var errNodeAlreadyDecommissioned = errors.New("node_already_decommissioned")
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
@@ -93,6 +98,11 @@ func main() {
 	defer cancel()
 
 	if err := run(ctx, creds, platformPubKey); err != nil {
+		if errors.Is(err, errNodeAlreadyDecommissioned) {
+			// Node was decommissioned in a prior run; deferred os.Exit(0) so
+			// defer cancel() and other deferred cleanup in main() can execute.
+			os.Exit(0)
+		}
 		// 410 GONE → exit 70 (EX_SOFTWARE) so the operator can distinguish
 		// decommissioning from generic agent failure. Flag was persisted in run();
 		// systemd restarts and the next startup short-circuits with Exit(0).
@@ -160,6 +170,10 @@ const (
 // tmp → fsync → rename → dir-fsync ensures durability across crashes.
 // Falls back to a direct write if rename fails (e.g. cross-device).
 func writeDecommissionedFlag() {
+	if err := os.MkdirAll(filepath.Dir(decommissionedFlagTmp), 0700); err != nil {
+		slog.Warn("decommissioned_flag_mkdir_failed", "error", err)
+		return
+	}
 	f, err := os.OpenFile(decommissionedFlagTmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		slog.Warn("decommissioned_flag_create_failed", "error", err)
@@ -192,7 +206,7 @@ func run(ctx context.Context, creds *enrollment.Credentials, platformPubKey ed25
 	if _, err := os.Stat(decommissionedFlag); err == nil {
 		slog.Warn("node_decommissioned_flag_exists", "path", decommissionedFlag,
 			"msg", "nodo rimosso dalla piattaforma — avvio bloccato. Usa --uninstall per rimuovere l'agent.")
-		os.Exit(0) // clean exit: systemd must not restart a decommissioned agent
+		return errNodeAlreadyDecommissioned
 	}
 
 	if !strings.HasPrefix(creds.PlatformURL, "https://") {
@@ -357,8 +371,9 @@ func runUninstall() error {
 	}
 
 	binPath, _ := os.Executable()
+	const canonicalBin = "/usr/local/bin/kochab-agent"
 	if binPath == "" {
-		binPath = "/usr/local/bin/kochab-agent"
+		binPath = canonicalBin
 	}
 
 	var failed []string
@@ -370,7 +385,9 @@ func runUninstall() error {
 	}
 
 	runStep("systemctl stop", func() error {
-		return exec.Command("systemctl", "stop", "kochab-agent").Run()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return exec.CommandContext(ctx, "systemctl", "stop", "kochab-agent").Run()
 	})
 	// Verify the unit is actually inactive before removing files — avoids the
 	// race where systemctl returned but the daemon is still mid-write.
@@ -381,7 +398,20 @@ func runUninstall() error {
 	runStep("systemctl disable", func() error {
 		return exec.Command("systemctl", "disable", "kochab-agent").Run()
 	})
-	runStep("remove binary", func() error { return os.Remove(binPath) })
+	runStep("remove binary", func() error {
+		// Always remove the canonical install path. os.Executable() may return a
+		// symlink or temp path, so we clean the real location unconditionally.
+		err := os.Remove(canonicalBin)
+		if os.IsNotExist(err) {
+			err = nil
+		}
+		if binPath != canonicalBin {
+			if e := os.Remove(binPath); e != nil && !os.IsNotExist(e) && err == nil {
+				err = e
+			}
+		}
+		return err
+	})
 	runStep("remove unit", func() error {
 		return os.Remove("/etc/systemd/system/kochab-agent.service")
 	})
@@ -422,7 +452,13 @@ func waitServiceInactive(unit string, timeout time.Duration) bool {
 		err := exec.CommandContext(ctx, "systemctl", "is-active", "--quiet", unit).Run()
 		cancel()
 		if err != nil {
-			return true // non-zero exit ⇒ not active
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				return true // non-zero exit from systemctl ⇒ not active
+			}
+			// exec error (binary not found, dbus unavailable) — cannot determine state
+			slog.Warn("waitServiceInactive_exec_error", "error", err)
+			return false
 		}
 		time.Sleep(200 * time.Millisecond)
 	}

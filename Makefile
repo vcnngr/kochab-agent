@@ -39,23 +39,22 @@ cross-compile: build-linux build-linux-arm64 checksum
 
 # Story 2-6 Task 1.1 — build .deb amd64 con Version: line templatizzata da $(VERSION).
 # Postcondition: $(BUILD_DIR)/$(BINARY_NAME)_$(VERSION)_amd64.deb + .sha256 sibling.
+# Build avviene in tmpdir — packaging/debian/DEBIAN/control non viene mai modificato.
 deb: build-linux
 	@command -v dpkg-deb >/dev/null || { echo "ERROR: dpkg-deb non installato (apt-get install dpkg)"; exit 1; }
 	@echo "Building .deb v$(VERSION) ..."
-	# Templatizza Version: nel control (backup FUORI da DEBIAN/ per non includerlo nel pkg)
-	cp packaging/debian/DEBIAN/control $(BUILD_DIR)/control.orig
-	sed -i.bak "s/^Version:.*/Version: $(VERSION)/" packaging/debian/DEBIAN/control
-	rm -f packaging/debian/DEBIAN/control.bak
-	mkdir -p packaging/debian/usr/local/bin packaging/debian/etc/systemd/system
-	cp $(BUILD_DIR)/$(BINARY_NAME) packaging/debian/usr/local/bin/
-	cp packaging/kochab-agent.service packaging/debian/etc/systemd/system/
-	chmod 755 packaging/debian/DEBIAN/postinst packaging/debian/DEBIAN/postrm packaging/debian/DEBIAN/prerm
-	find packaging/debian -name '.gitkeep' -delete || true
-	dpkg-deb --build --root-owner-group packaging/debian $(BUILD_DIR)/$(BINARY_NAME)_$(VERSION)_amd64.deb
-	# Ripristina control originale (Version placeholder)
-	mv $(BUILD_DIR)/control.orig packaging/debian/DEBIAN/control
-	# sha256 sibling per .deb
-	cd $(BUILD_DIR) && sha256sum $(BINARY_NAME)_$(VERSION)_amd64.deb > $(BINARY_NAME)_$(VERSION)_amd64.deb.sha256
+	@set -e; \
+	deb_tmp=$$(mktemp -d); \
+	trap "rm -rf $$deb_tmp" EXIT; \
+	cp -r packaging/debian $$deb_tmp/deb; \
+	sed -i "s/^Version:.*/Version: $(VERSION)/" $$deb_tmp/deb/DEBIAN/control; \
+	mkdir -p $$deb_tmp/deb/usr/local/bin $$deb_tmp/deb/etc/systemd/system; \
+	cp $(BUILD_DIR)/$(BINARY_NAME) $$deb_tmp/deb/usr/local/bin/; \
+	cp packaging/kochab-agent.service $$deb_tmp/deb/etc/systemd/system/; \
+	chmod 755 $$deb_tmp/deb/DEBIAN/postinst $$deb_tmp/deb/DEBIAN/postrm $$deb_tmp/deb/DEBIAN/prerm; \
+	find $$deb_tmp/deb -name '.gitkeep' -delete || true; \
+	dpkg-deb --build --root-owner-group $$deb_tmp/deb $(BUILD_DIR)/$(BINARY_NAME)_$(VERSION)_amd64.deb
+	@cd $(BUILD_DIR) && sha256sum $(BINARY_NAME)_$(VERSION)_amd64.deb > $(BINARY_NAME)_$(VERSION)_amd64.deb.sha256
 	@echo ".deb built: $(BUILD_DIR)/$(BINARY_NAME)_$(VERSION)_amd64.deb"
 
 # Story 2-6 Task 1.1 — full release artifacts (cross-compile + deb).

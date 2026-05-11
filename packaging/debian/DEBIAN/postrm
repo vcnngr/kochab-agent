@@ -3,7 +3,8 @@ set -e
 
 case "$1" in
     purge)
-        rm -rf /etc/kochab
+        rm -rf /etc/kochab || true
+        rm -rf /var/lib/kochab || true
         systemctl daemon-reload || true
         ;;
     remove|upgrade|failed-upgrade|disappear)

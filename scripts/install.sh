@@ -138,6 +138,9 @@ ExecStart=/usr/local/bin/kochab-agent
 WatchdogSec=120
 Restart=on-failure
 RestartSec=5
+# Exit 70 = node decommissioned (410 GONE). Sentinel file + boot guard make
+# re-start idempotent; systemd skip avoids restart-loop noise. Story 2.6.1 AC-12 (d).
+RestartPreventExitStatus=70
 
 # Security hardening
 NoNewPrivileges=true

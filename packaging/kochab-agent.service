@@ -10,6 +10,11 @@ ExecStart=/usr/local/bin/kochab-agent
 WatchdogSec=120
 Restart=on-failure
 RestartSec=5
+# Exit 70 = node decommissioned by the platform (410 GONE on poll). systemd
+# must NOT restart in that case — the agent already wrote /etc/kochab/decommissioned,
+# the boot guard would re-emit 70 on every restart anyway, and a restart loop
+# would spam audit logs. Story 2.6.1 AC-12 (d).
+RestartPreventExitStatus=70
 
 # Security hardening
 NoNewPrivileges=true

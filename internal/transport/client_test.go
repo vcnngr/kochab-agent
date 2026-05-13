@@ -135,7 +135,7 @@ func TestPollClient_AuthHeadersPresent(t *testing.T) {
 	}
 }
 
-func TestPollClient_NoTimestampHeader(t *testing.T) {
+func TestPollClient_TimestampHeader(t *testing.T) {
 	var gotTimestamp string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotTimestamp = r.Header.Get("X-Agent-Timestamp")
@@ -146,8 +146,50 @@ func TestPollClient_NoTimestampHeader(t *testing.T) {
 	client := newTestClient(t, srv.URL, "agent-01", "secret")
 	_, _ = client.Poll(context.Background())
 
-	if gotTimestamp != "" {
-		t.Errorf("X-Agent-Timestamp should be absent (deferred W0), got %q", gotTimestamp)
+	if gotTimestamp == "" {
+		t.Error("X-Agent-Timestamp must be present (W0 closed: timestamp reintroduced in commit 968aa3a)")
+	}
+	// Must be valid RFC3339.
+	if _, err := time.Parse(time.RFC3339, gotTimestamp); err != nil {
+		t.Errorf("X-Agent-Timestamp %q is not RFC3339: %v", gotTimestamp, err)
+	}
+}
+
+func TestPollClient_410_ReturnsDecommissioned(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.URL, "agent-01", "secret")
+	_, err := client.Poll(context.Background())
+
+	if err == nil {
+		t.Fatal("expected error for 410, got nil")
+	}
+	if !transport.IsNodeDecommissioned(err) {
+		t.Errorf("expected ErrNodeDecommissioned, got %v", err)
+	}
+}
+
+func TestRunLoop_410_Stops(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusGone)
+	}))
+	defer srv.Close()
+
+	client := newTestClient(t, srv.URL, "agent-01", "secret")
+
+	noopVerify := func(*protocol.TaskPayload) error { return nil }
+	noopExecute := func(context.Context, *protocol.TaskPayload) (*protocol.TaskResult, error) {
+		return &protocol.TaskResult{}, nil
+	}
+	noopReport := func(context.Context, *protocol.TaskResult) error { return nil }
+
+	err := client.RunLoop(context.Background(), noopVerify, noopExecute, noopReport)
+
+	if !transport.IsNodeDecommissioned(err) {
+		t.Errorf("RunLoop: expected ErrNodeDecommissioned on 410, got %v", err)
 	}
 }
 
@@ -170,7 +212,7 @@ func TestRunLoop_204Reconnects(t *testing.T) {
 	}
 	noopReport := func(context.Context, *protocol.TaskResult) error { return nil }
 
-	client.RunLoop(ctx, noopVerify, noopExecute, noopReport)
+	_ = client.RunLoop(ctx, noopVerify, noopExecute, noopReport)
 
 	// With 204s, the loop reconnects immediately — expect multiple calls.
 	if got := callCount.Load(); got < 2 {

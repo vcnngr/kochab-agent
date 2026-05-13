@@ -1,6 +1,7 @@
 package profiler
 
 import (
+	"context"
 	"errors"
 	"testing"
 )
@@ -29,7 +30,7 @@ func TestCollectProfile_WithMockRunner(t *testing.T) {
 		}
 	}
 
-	profile, err := CollectProfile("vortex.blackhole.global")
+	profile, err := CollectProfile(context.Background(), "vortex.blackhole.global")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestCollectProfile_ServicesFallback(t *testing.T) {
 		}
 	}
 
-	profile, err := CollectProfile("test-host")
+	profile, err := CollectProfile(context.Background(), "test-host")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +181,7 @@ func TestCollectProfile_SecurityUpdates(t *testing.T) {
 		}
 	}
 
-	profile, err := CollectProfile("test-host")
+	profile, err := CollectProfile(context.Background(), "test-host")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -207,7 +208,7 @@ func TestCollectProfile_FirewallDisabled(t *testing.T) {
 		}
 	}
 
-	profile, err := CollectProfile("test-host")
+	profile, err := CollectProfile(context.Background(), "test-host")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,7 +237,7 @@ func TestCollectProfile_PortParsingIPv6(t *testing.T) {
 		}
 	}
 
-	profile, err := CollectProfile("test-host")
+	profile, err := CollectProfile(context.Background(), "test-host")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

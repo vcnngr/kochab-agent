@@ -1,0 +1,11 @@
+Package: kochab-agent
+Version: 0.1.0
+Section: admin
+Priority: optional
+Architecture: amd64
+Maintainer: Kochab <hello@kochab.ai>
+Depends: systemd
+Description: Kochab infrastructure monitoring agent
+ Lightweight agent that connects a Linux server to the Kochab platform
+ over an HTTPS long-polling control channel. Reports task results,
+ buffers payloads when offline, and integrates with systemd watchdog.

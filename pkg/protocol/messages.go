@@ -150,12 +150,20 @@ type ProfilePayload struct {
 
 // Profile contains the server's system information.
 type Profile struct {
-	Hostname string       `json:"hostname"`
-	OS       OSInfo       `json:"os"`
-	Packages PackagesInfo `json:"packages"`
-	Services ServicesInfo `json:"services"`
-	Network  NetworkInfo  `json:"network"`
-	Config   ConfigInfo   `json:"configuration"`
+	Hostname    string           `json:"hostname"`
+	OS          OSInfo           `json:"os"`
+	Packages    PackagesInfo     `json:"packages"`
+	Services    ServicesInfo     `json:"services"`
+	Network     NetworkInfo      `json:"network"`
+	Config      ConfigInfo       `json:"configuration"`
+	LogMetadata *LogMetadataInfo `json:"log_metadata,omitempty"`
+}
+
+// LogMetadataInfo holds log file line counts — never log content (FR50, NFR12).
+type LogMetadataInfo struct {
+	SSHLogCount      int `json:"ssh_log_count"`
+	PostfixLogCount  int `json:"postfix_log_count"`
+	Fail2banLogCount int `json:"fail2ban_log_count"`
 }
 
 // PackagesInfo summarizes installed packages.

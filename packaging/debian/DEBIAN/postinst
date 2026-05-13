@@ -1,0 +1,20 @@
+#!/bin/bash
+set -e
+
+# AC-11 / Story 2-6: NO systemctl enable automatico.
+# Il servizio richiede credentials valide (agent.key) scritte da `--enroll`.
+# Enable esplicito post-enrollment evita avvio servizio senza credentials.
+
+systemctl daemon-reload || true
+
+# LL9 / Story 2-6 Task 0.2: chmod 755 docs dir if present (debian policy).
+if [ -d /usr/share/doc/kochab-agent ]; then
+    chown -R root:root /usr/share/doc/kochab-agent
+    chmod -R 755 /usr/share/doc/kochab-agent
+fi
+
+# Avvio post-enrollment:
+#   sudo KOCHAB_ENROLL_TOKEN=... /usr/local/bin/kochab-agent --enroll --platform-url https://api.kochab.ai
+#   sudo systemctl enable --now kochab-agent
+
+exit 0

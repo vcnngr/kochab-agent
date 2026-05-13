@@ -1,6 +1,7 @@
 package profiler
 
 import (
+	"context"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -43,19 +44,21 @@ func CollectOSInfo() protocol.OSInfo {
 	return info
 }
 
-// CollectProfile gathers the full server profile.
-func CollectProfile(hostname string) (*protocol.ProfilePayload, error) {
+// CollectProfile gathers the full server profile including log metadata.
+func CollectProfile(ctx context.Context, hostname string) (*protocol.ProfilePayload, error) {
 	osInfo := CollectOSInfo()
+	logMeta := CollectLogMetadata(ctx)
 
 	payload := &protocol.ProfilePayload{
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 		Profile: protocol.Profile{
-			Hostname: hostname,
-			OS:       osInfo,
-			Packages: collectPackages(),
-			Services: collectServices(),
-			Network:  collectNetwork(),
-			Config:   collectConfig(),
+			Hostname:    hostname,
+			OS:          osInfo,
+			Packages:    collectPackages(),
+			Services:    collectServices(),
+			Network:     collectNetwork(),
+			Config:      collectConfig(),
+			LogMetadata: &logMeta,
 		},
 	}
 

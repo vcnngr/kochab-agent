@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Kochab Agent Installer
-# Usage: curl -fsSL https://get.kochab.dev/enroll/<TOKEN> | bash
+# Usage: curl -fsSL https://get.kochab.ai/enroll/<TOKEN> | bash
 #    or: bash install.sh --token <TOKEN> [--platform-url <URL>]
 set -euo pipefail
 
@@ -9,7 +9,11 @@ INSTALL_DIR="/usr/local/bin"
 CONFIG_DIR="/etc/kochab"
 SERVICE_FILE="/etc/systemd/system/kochab-agent.service"
 PLATFORM_URL="${PLATFORM_URL:-https://api.kochab.ai}"
-RELEASE_URL="${RELEASE_URL:-https://get.kochab.dev/releases/latest}"
+RELEASE_URL="${RELEASE_URL:-https://github.com/vcnngr/kochab-agent/releases/latest/download}"
+case "$RELEASE_URL" in
+  https://github.com/vcnngr/*) ;;
+  *) echo "ERROR: RELEASE_URL non valido — solo https://github.com/vcnngr/ permesso" >&2; exit 1 ;;
+esac
 TOKEN=""
 
 # Color output
@@ -98,17 +102,19 @@ download_binary() {
     local binary_url="${RELEASE_URL}/${BINARY_NAME}"
     local checksum_url="${RELEASE_URL}/${BINARY_NAME}.sha256"
 
-    if ! curl -fsSL -o "${tmp_dir}/${BINARY_NAME}" "$binary_url"; then
-        cleanup_install
+    if ! curl -fsSL --max-time 60 -o "${tmp_dir}/${BINARY_NAME}" "$binary_url"; then
         die "Download del binary fallito da ${binary_url}"
     fi
 
-    # Verify checksum
-    if curl -fsSL -o "${tmp_dir}/${BINARY_NAME}.sha256" "$checksum_url" 2>/dev/null; then
-        log "Verifica checksum SHA256..."
-        (cd "$tmp_dir" && sha256sum -c "${BINARY_NAME}.sha256") || die "Checksum non valido!"
-    else
-        warn "Checksum non disponibile — skip verifica."
+    # Verify checksum — HARD-FAIL (Story 2-6 Task 1.bis):
+    # NO skip-on-error. Checksum 404 o mismatch → installazione abortita per sicurezza.
+    log "Scarico checksum SHA256..."
+    if ! curl -fsSL --max-time 30 -o "${tmp_dir}/${BINARY_NAME}.sha256" "$checksum_url"; then
+        die "Impossibile scaricare ${BINARY_NAME}.sha256 da ${checksum_url} — installazione abortita per sicurezza."
+    fi
+    log "Verifica checksum SHA256..."
+    if ! (cd "$tmp_dir" && sha256sum -c "${BINARY_NAME}.sha256"); then
+        die "Checksum SHA256 non valido — il binary scaricato non corrisponde al digest pubblicato. Installazione abortita."
     fi
 
     # Install binary
@@ -175,7 +181,7 @@ main() {
     parse_args "$@"
 
     if [[ -z "$TOKEN" ]]; then
-        die "Token di enrollment mancante. Uso: curl -fsSL https://get.kochab.dev/enroll/<TOKEN> | bash"
+        die "Token di enrollment mancante. Uso: curl -fsSL https://get.kochab.ai/enroll/<TOKEN> | bash"
     fi
 
     check_prereqs

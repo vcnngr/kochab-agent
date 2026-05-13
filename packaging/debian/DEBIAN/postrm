@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+
+case "$1" in
+    purge)
+        rm -rf /etc/kochab || true
+        rm -rf /var/lib/kochab || true
+        systemctl daemon-reload || true
+        ;;
+    remove|upgrade|failed-upgrade|disappear)
+        # The unit file just got removed/replaced by dpkg — refresh systemd
+        # state so `systemctl status` doesn't keep a stale loaded entry.
+        systemctl daemon-reload || true
+        ;;
+esac
+
+exit 0

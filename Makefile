@@ -1,4 +1,4 @@
-.PHONY: build test lint build-linux build-linux-arm64 checksum cross-compile deb release clean
+.PHONY: build test lint build-linux build-linux-arm64 checksum cross-compile deb release clean check-coverage check-all
 
 BINARY_NAME := kochab-agent
 VERSION ?= 0.1.0
@@ -65,3 +65,13 @@ release: cross-compile deb
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf packaging/debian/usr packaging/debian/etc
+
+# check-coverage — Epic 2 retro guardrail. Enforces per-package coverage floors
+# (P0 protocol/executor/transport packages cannot regress). See
+# scripts/check-coverage.sh.
+check-coverage:
+	@./scripts/check-coverage.sh
+
+# check-all — run all retro-codified guardrails locally. Mirrors CI quality gate.
+check-all: check-coverage
+	@echo "All Epic 2 retro guardrails pass."

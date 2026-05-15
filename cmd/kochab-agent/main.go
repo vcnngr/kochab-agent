@@ -19,10 +19,13 @@ import (
 
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/kochab-ai/kochab-agent/internal/agent"
+	auditrunner "github.com/kochab-ai/kochab-agent/internal/audit"
 	"github.com/kochab-ai/kochab-agent/internal/enrollment"
 	"github.com/kochab-ai/kochab-agent/internal/executor"
 	"github.com/kochab-ai/kochab-agent/internal/profiler"
 	"github.com/kochab-ai/kochab-agent/internal/transport"
+	// Register all audit rules via init() side-effects.
+	_ "github.com/kochab-ai/kochab-agent/pkg/audit/rules"
 	"github.com/kochab-ai/kochab-agent/pkg/protocol"
 )
 
@@ -225,7 +228,14 @@ func run(ctx context.Context, creds *enrollment.Credentials, platformPubKey ed25
 	}
 
 	// Execute function: dispatches to the appropriate task handler.
+	// Story 3.1: audit tasks are run via the audit package which posts an
+	// AuditResult to /v1/audit_results (distinct from the /v1/results task
+	// contract). The TaskResult returned here marks the task row complete or
+	// failed so the platform's task lifecycle stays consistent.
 	executeFn := func(ctx context.Context, task *protocol.TaskPayload) (*protocol.TaskResult, error) {
+		if task != nil && task.TaskType == string(protocol.TaskTypeAudit) {
+			return runAuditTask(ctx, task, creds)
+		}
 		return executor.Execute(ctx, task)
 	}
 
@@ -477,4 +487,51 @@ func loadPlatformPubKey(pubKeyB64 string) (ed25519.PublicKey, error) {
 		return nil, fmt.Errorf("platform public key: expected %d bytes, got %d", ed25519.PublicKeySize, len(keyBytes))
 	}
 	return ed25519.PublicKey(keyBytes), nil
+}
+
+// runAuditTask executes an audit task and posts the AuditResult to
+// /v1/audit_results. Story 3.1 AC-3. Wall-clock budget for the full audit is
+// 120s (NFR2); per-rule deadline is 10s (rules.DefaultRuleTimeout) enforced
+// inside the runner.
+//
+// Returns a TaskResult so the generic task lifecycle (claim → result) still
+// completes on /v1/results — without it the audit task would expire and
+// re-fire on the next poll.
+func runAuditTask(ctx context.Context, task *protocol.TaskPayload, creds *enrollment.Credentials) (*protocol.TaskResult, error) {
+	auditCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+	defer cancel()
+
+	result, err := auditrunner.Run(auditCtx, task, auditrunner.RunOptions{})
+	if err != nil {
+		slog.Warn("audit_run_failed", "task_id", task.TaskID, "error", err)
+		return &protocol.TaskResult{
+			TaskID: task.TaskID,
+			Status: "failed",
+			Error:  err.Error(),
+		}, nil
+	}
+
+	// Best-effort POST /v1/audit_results. A failure here marks the task as
+	// failed; the platform's stale-task cleanup will mark the audit_run as
+	// failed too.
+	if reportErr := transport.ReportAuditResult(ctx, result, creds.PlatformURL, creds.AgentID, creds.AgentSecret, nil); reportErr != nil {
+		slog.Warn("audit_result_report_failed", "task_id", task.TaskID, "audit_run_id", result.RunID, "error", reportErr)
+		return &protocol.TaskResult{
+			TaskID: task.TaskID,
+			Status: "failed",
+			Error:  fmt.Sprintf("audit report failed: %s", reportErr),
+		}, nil
+	}
+
+	slog.Info("audit_task_completed",
+		"task_id", task.TaskID,
+		"audit_run_id", result.RunID,
+		"findings", len(result.Findings),
+		"checks_total", result.ChecksTotal,
+		"checks_passed", result.ChecksPassed,
+	)
+	return &protocol.TaskResult{
+		TaskID: task.TaskID,
+		Status: "completed",
+	}, nil
 }

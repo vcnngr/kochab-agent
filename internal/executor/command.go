@@ -24,8 +24,11 @@ func Execute(ctx context.Context, task *protocol.TaskPayload) (*protocol.TaskRes
 	case string(protocol.TaskTypeProfileRefresh):
 		result, execErr = executeProfileRefresh(ctx, task)
 	case string(protocol.TaskTypeAudit):
-		// Audit execution is deferred to Story 3.1.
-		execErr = fmt.Errorf("unsupported_task_type: audit is not yet implemented (Story 3.1)")
+		// Audit dispatch is handled by cmd/kochab-agent/main.go runAuditTask
+		// because the result is posted to /v1/audit_results, not /v1/results.
+		// If Execute is invoked directly for an audit task (tests or future
+		// codepaths), surface a clear error instead of silently succeeding.
+		execErr = fmt.Errorf("audit task must be dispatched via runAuditTask, not executor.Execute")
 	default:
 		execErr = fmt.Errorf("unsupported_task_type: %q", task.TaskType)
 	}

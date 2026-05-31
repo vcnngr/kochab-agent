@@ -65,6 +65,9 @@ func parseListenScope(ssOutput string, port int) (string, []string) {
 		}
 		host := local[:len(local)-len(portSuffix)]
 		host = strings.Trim(host, "[]") // strip IPv6 brackets
+		if i := strings.IndexByte(host, '%'); i >= 0 {
+			host = host[:i] // strip IPv6 zone id (fe80::1%eth0 → fe80::1)
+		}
 		addrs = append(addrs, local)
 
 		switch {

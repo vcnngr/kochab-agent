@@ -2,6 +2,7 @@ package rules
 
 import (
 	"context"
+	"strconv"
 	"strings"
 )
 
@@ -44,11 +45,38 @@ func checkSSHDisablePasswordAuth(ctx context.Context) (bool, map[string]any, err
 	}
 	scanLines(src)
 
-	// Includes scanning is best-effort. If we can't read the dir, fall back to
-	// the base file's last directive.
-	_ = ctx
+	// Story 3.2 — attach exposure signals so the platform can compute
+	// context-aware severity (SSH password auth is critical if the port is
+	// reachable from the internet, only a warning if private-only).
+	port := sshPort(src)
+	scope, addrs := listenScope(ctx, port)
+
 	return final == "no", map[string]any{
 		"effective_setting": final,
 		"config_path":       "/etc/ssh/sshd_config",
+		"ssh_port":          port,
+		"bind_scope":        scope,
+		"listen_addrs":      addrs,
+		"exposed_public":    scope == bindScopePublic,
 	}, nil
+}
+
+// sshPort returns the configured sshd Port (last directive wins), defaulting to 22.
+func sshPort(config string) int {
+	port := 22
+	for _, raw := range strings.Split(config, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(strings.ToLower(line), "port ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if p, err := strconv.Atoi(fields[1]); err == nil && p > 0 && p <= 65535 {
+					port = p
+				}
+			}
+		}
+	}
+	return port
 }

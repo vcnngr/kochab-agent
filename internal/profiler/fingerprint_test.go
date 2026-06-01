@@ -66,3 +66,18 @@ func TestGenerateFingerprintFrom_DelimiterPreventsCollision(t *testing.T) {
 		t.Fatal("delimiter should prevent field boundary collision")
 	}
 }
+
+func TestGenerateFingerprintFrom_ProductUUIDDistinguishes(t *testing.T) {
+	// Cloned VMs may share machine-id/hostname/cpu/disk but have distinct
+	// DMI product_uuid — fingerprints must differ (deneb incident 2026-06-01).
+	base := FingerprintSources{MachineID: "same", Hostname: "same", CPUModel: "same", DiskModel: "same"}
+	a := base
+	a.ProductUUID = "1364d958-3b29-11eb-9757-200ddc305f00"
+	b := base
+	b.ProductUUID = "a84f4838-5807-0000-0000-000000000000"
+	fa, _ := GenerateFingerprintFrom(a)
+	fb, _ := GenerateFingerprintFrom(b)
+	if fa == fb {
+		t.Fatal("fingerprints must differ when only product_uuid differs")
+	}
+}

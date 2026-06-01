@@ -10,7 +10,12 @@ import (
 )
 
 // GenerateFingerprint creates a deterministic SHA256 fingerprint from hardware identifiers.
-// Input: /etc/machine-id + hostname + CPU model + disk model.
+// Input: DMI product_uuid + /etc/machine-id + hostname + CPU model + disk model.
+//
+// product_uuid (/sys/class/dmi/id/product_uuid) is the strongest source: the
+// hypervisor/firmware assigns a UUID that is unique per machine/VM instance even
+// when /etc/machine-id was cloned from a golden image. Adding it eliminates
+// cross-node fingerprint collisions (deneb re-enroll incident 2026-06-01).
 // Fallback: missing sources use empty string (not fatal), but warnings are logged.
 func GenerateFingerprint() (string, error) {
 	return GenerateFingerprintFrom(defaultSources())
@@ -18,20 +23,23 @@ func GenerateFingerprint() (string, error) {
 
 // FingerprintSources provides the input data for fingerprint generation.
 type FingerprintSources struct {
-	MachineID string
-	Hostname  string
-	CPUModel  string
-	DiskModel string
+	ProductUUID string
+	MachineID   string
+	Hostname    string
+	CPUModel    string
+	DiskModel   string
 }
 
 // GenerateFingerprintFrom creates a fingerprint from given sources (testable).
 // Uses null byte delimiter between fields to prevent collision from field boundary shifts.
 // Returns error if all sources are empty (cannot generate a meaningful fingerprint).
 func GenerateFingerprintFrom(src FingerprintSources) (string, error) {
-	if src.MachineID == "" && src.Hostname == "" && src.CPUModel == "" && src.DiskModel == "" {
+	if src.ProductUUID == "" && src.MachineID == "" && src.Hostname == "" && src.CPUModel == "" && src.DiskModel == "" {
 		return "", errors.New("all fingerprint sources are empty — cannot generate unique fingerprint")
 	}
 	h := sha256.New()
+	h.Write([]byte(src.ProductUUID))
+	h.Write([]byte{0})
 	h.Write([]byte(src.MachineID))
 	h.Write([]byte{0})
 	h.Write([]byte(src.Hostname))
@@ -44,6 +52,14 @@ func GenerateFingerprintFrom(src FingerprintSources) (string, error) {
 
 func defaultSources() FingerprintSources {
 	src := FingerprintSources{}
+
+	// DMI product_uuid — unique per machine/VM instance (survives machine-id
+	// cloning). Requires root; absent in many containers (fall back gracefully).
+	if data, err := os.ReadFile("/sys/class/dmi/id/product_uuid"); err == nil {
+		src.ProductUUID = strings.TrimSpace(string(data))
+	} else {
+		slog.Warn("fingerprint: /sys/class/dmi/id/product_uuid not available", "error", err)
+	}
 
 	// /etc/machine-id
 	if data, err := os.ReadFile("/etc/machine-id"); err == nil {

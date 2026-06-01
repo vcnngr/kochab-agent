@@ -205,6 +205,74 @@ func TestAuditResult_JSON(t *testing.T) {
 	}
 }
 
+func TestPreflightStatus_Valid(t *testing.T) {
+	tests := []struct {
+		name string
+		ps   PreflightStatus
+		want bool
+	}{
+		{"passed", PreflightStatusPassed, true},
+		{"blocked", PreflightStatusBlocked, true},
+		{"skipped", PreflightStatusSkipped, true},
+		{"none", PreflightStatusNone, true},
+		{"empty", PreflightStatus(""), false},
+		{"unknown", PreflightStatus("bogus"), false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.ps.Valid(); got != tc.want {
+				t.Errorf("PreflightStatus(%q).Valid() = %v, want %v", tc.ps, got, tc.want)
+			}
+		})
+	}
+}
+
+// LOCKED CONTRACT: preflight_status is always present (never empty/omitted) and
+// preflight_reason is always present (string|null). Field names must match the
+// agent→platform→app contract exactly.
+func TestFinding_PreflightJSON(t *testing.T) {
+	reason := "Prima configura l'accesso con chiave SSH"
+	f := Finding{
+		RuleCode:        "ssh.disable_password_auth",
+		Severity:        SeverityCritical,
+		Status:          FindingStatusOpen,
+		Message:         "rule failed",
+		PreflightStatus: PreflightStatusBlocked,
+		PreflightReason: &reason,
+	}
+	data, err := json.Marshal(f)
+	if err != nil {
+		t.Fatalf("Marshal Finding: %v", err)
+	}
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("Unmarshal raw: %v", err)
+	}
+	if raw["preflight_status"] != "blocked" {
+		t.Errorf("preflight_status = %v, want blocked", raw["preflight_status"])
+	}
+	if raw["preflight_reason"] != reason {
+		t.Errorf("preflight_reason = %v, want %q", raw["preflight_reason"], reason)
+	}
+
+	// Default finding (no preflight): status must still be present and reason null.
+	none := Finding{RuleCode: "x", Severity: SeverityInfo, Status: FindingStatusOpen, PreflightStatus: PreflightStatusNone}
+	data2, _ := json.Marshal(none)
+	raw2 := make(map[string]any)
+	if err := json.Unmarshal(data2, &raw2); err != nil {
+		t.Fatalf("Unmarshal raw2: %v", err)
+	}
+	if _, ok := raw2["preflight_status"]; !ok {
+		t.Error("preflight_status must always be present (never omitted)")
+	}
+	if raw2["preflight_status"] != "none" {
+		t.Errorf("preflight_status = %v, want none", raw2["preflight_status"])
+	}
+	if v, ok := raw2["preflight_reason"]; !ok || v != nil {
+		t.Errorf("preflight_reason should be present and null, got ok=%v v=%v", ok, v)
+	}
+}
+
 func TestFinding_OmitEmpty(t *testing.T) {
 	f := Finding{
 		RuleCode: "FW-001",

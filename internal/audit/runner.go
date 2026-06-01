@@ -98,12 +98,15 @@ func Run(ctx context.Context, task *protocol.TaskPayload, opts RunOptions) (*pro
 				msg = "rule timed out"
 				ctxOut["timeout_seconds"] = int(opts.RuleTimeout.Seconds())
 			}
+			status, reason := runPreflight(ctx, rule, opts.RuleTimeout)
 			result.Findings = append(result.Findings, protocol.Finding{
 				RuleCode:        rule.Code,
 				Severity:        protocol.SeverityInfo,
 				Status:          protocol.FindingStatusOpen,
 				Message:         msg,
 				SeverityContext: ctxOut,
+				PreflightStatus: status,
+				PreflightReason: reason,
 			})
 			slog.Warn("audit_rule_error", "rule_code", rule.Code, "error", rerr)
 			continue
@@ -118,12 +121,18 @@ func Run(ctx context.Context, task *protocol.TaskPayload, opts RunOptions) (*pro
 		if severity == "" {
 			severity = protocol.SeverityWarning
 		}
+		// D-4.1-1: eager pre-flight. The rule failed (finding produced), so run
+		// its read-only preflight now and embed the outcome in the payload —
+		// zero extra round-trips when the operator opens the finding detail.
+		status, reason := runPreflight(ctx, rule, opts.RuleTimeout)
 		result.Findings = append(result.Findings, protocol.Finding{
 			RuleCode:        rule.Code,
 			Severity:        severity,
 			Status:          protocol.FindingStatusOpen,
 			Message:         "rule failed",
 			SeverityContext: rctx,
+			PreflightStatus: status,
+			PreflightReason: reason,
 		})
 	}
 
@@ -141,6 +150,78 @@ func safeCheck(ctx context.Context, fn rules.CheckFunc) (passed bool, sctx map[s
 	defer func() {
 		if rec := recover(); rec != nil {
 			err = fmt.Errorf("rule panic: %v", rec)
+		}
+	}()
+	return fn(ctx)
+}
+
+// lockoutPreflightUnverifiableReason is surfaced as preflight_reason when a
+// fail-closed (lockout-sensitive) rule's preflight cannot be verified — error,
+// panic, or unknown exit code. Showing the fix in this case carries real
+// lockout risk, so the fix is suppressed and this guidance is shown instead.
+const lockoutPreflightUnverifiableReason = "Impossibile verificare l'accesso con chiave SSH — fix bloccato per sicurezza. Configura e verifica una chiave SSH."
+
+// runPreflight executes a failing rule's READ-ONLY pre-flight guardrail (Story
+// 4.1, D-4.1-1) and maps its exit code to a protocol.PreflightStatus.
+//
+//	rule has no preflight        → "none"   (fix shown)
+//	PreflightExitPass  (exit 0)  → "passed" (fix shown)
+//	PreflightExitBlock (exit 1)  → "blocked" + reason (fix suppressed by platform)
+//	PreflightExitSkip  (exit 2)  → "skipped" (not applicable → treated as pass; fix shown)
+//
+// Per-rule failure policy for the error/panic/unknown-exit branch:
+//
+//   - Default (fail-OPEN): degrades to "passed" so a flaky read-only probe never
+//     silently suppresses a legitimate fix. This suits the bulk of rules.
+//   - FailClosed (fail-CLOSED): for lockout-sensitive guardrails (e.g.
+//     ssh.disable_password_auth) the same branch maps to "blocked" with a
+//     lockout-risk reason. Showing the fix on an unverifiable probe could lock
+//     the operator out, so the safe default is to suppress it.
+//
+// The preflight runs under the same per-rule timeout as the check and is
+// strictly read-only — no fix is ever executed here.
+func runPreflight(ctx context.Context, rule rules.Rule, timeout time.Duration) (protocol.PreflightStatus, *string) {
+	if !rule.HasPreflight() {
+		return protocol.PreflightStatusNone, nil
+	}
+	preCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	code, reason, err := safePreflight(preCtx, rule.Preflight)
+	if err != nil {
+		slog.Warn("audit_preflight_error", "rule_code", rule.Code, "error", err, "fail_closed", rule.FailClosed)
+		return preflightFailurePolicy(rule)
+	}
+	switch code {
+	case rules.PreflightExitBlock:
+		r := reason
+		return protocol.PreflightStatusBlocked, &r
+	case rules.PreflightExitSkip:
+		return protocol.PreflightStatusSkipped, nil
+	case rules.PreflightExitPass:
+		return protocol.PreflightStatusPassed, nil
+	default:
+		slog.Warn("audit_preflight_unknown_exit", "rule_code", rule.Code, "exit_code", code, "fail_closed", rule.FailClosed)
+		return preflightFailurePolicy(rule)
+	}
+}
+
+// preflightFailurePolicy resolves the error/panic/unknown-exit outcome for a
+// rule according to its FailClosed flag: lockout-sensitive rules block (suppress
+// the fix) with lockout guidance; all others pass (show the fix).
+func preflightFailurePolicy(rule rules.Rule) (protocol.PreflightStatus, *string) {
+	if rule.FailClosed {
+		r := lockoutPreflightUnverifiableReason
+		return protocol.PreflightStatusBlocked, &r
+	}
+	return protocol.PreflightStatusPassed, nil
+}
+
+// safePreflight wraps a PreflightFunc call so a panic becomes an error rather
+// than crashing the agent process. Mirrors safeCheck.
+func safePreflight(ctx context.Context, fn rules.PreflightFunc) (code int, reason string, err error) {
+	defer func() {
+		if rec := recover(); rec != nil {
+			err = fmt.Errorf("preflight panic: %v", rec)
 		}
 	}()
 	return fn(ctx)

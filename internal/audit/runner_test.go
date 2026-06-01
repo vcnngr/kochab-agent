@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"testing"
 	"time"
 
@@ -159,6 +160,179 @@ func TestRun_PanickingRule_DoesNotCrashRunner(t *testing.T) {
 		t.Fatalf("expected 1 info finding from panicking rule, got %d", len(result.Findings))
 	}
 }
+
+// Story 4.1 — eager preflight on failing rules. Table-driven over the exit-code
+// → preflight_status mapping contract.
+func TestRun_PreflightExitCodeMapping(t *testing.T) {
+	const failReason = "do this first"
+	cases := []struct {
+		name       string
+		preflight  rules.PreflightFunc // nil => rule has no preflight
+		wantStatus protocol.PreflightStatus
+		wantReason *string
+	}{
+		{
+			name:       "no_preflight_is_none",
+			preflight:  nil,
+			wantStatus: protocol.PreflightStatusNone,
+			wantReason: nil,
+		},
+		{
+			name:       "exit0_pass",
+			preflight:  func(context.Context) (int, string, error) { return rules.PreflightExitPass, "", nil },
+			wantStatus: protocol.PreflightStatusPassed,
+			wantReason: nil,
+		},
+		{
+			name:       "exit1_block_with_reason",
+			preflight:  func(context.Context) (int, string, error) { return rules.PreflightExitBlock, failReason, nil },
+			wantStatus: protocol.PreflightStatusBlocked,
+			wantReason: strPtr(failReason),
+		},
+		{
+			name:       "exit2_skip_treated_as_pass",
+			preflight:  func(context.Context) (int, string, error) { return rules.PreflightExitSkip, "", nil },
+			wantStatus: protocol.PreflightStatusSkipped,
+			wantReason: nil,
+		},
+		{
+			name:       "preflight_error_degrades_to_pass",
+			preflight:  func(context.Context) (int, string, error) { return 0, "", errors.New("probe boom") },
+			wantStatus: protocol.PreflightStatusPassed,
+			wantReason: nil,
+		},
+		{
+			name:       "preflight_panic_degrades_to_pass",
+			preflight:  func(context.Context) (int, string, error) { panic("kaboom") },
+			wantStatus: protocol.PreflightStatusPassed,
+			wantReason: nil,
+		},
+		{
+			name:       "unknown_exit_degrades_to_pass",
+			preflight:  func(context.Context) (int, string, error) { return 99, "ignored", nil },
+			wantStatus: protocol.PreflightStatusPassed,
+			wantReason: nil,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestRules(t)
+			failingCheck := func(context.Context) (bool, map[string]any, error) {
+				return false, map[string]any{"k": "v"}, nil
+			}
+			if tc.preflight == nil {
+				rules.RegisterRule("test.rule", failingCheck)
+			} else {
+				rules.RegisterRuleWithPreflight("test.rule", failingCheck, tc.preflight)
+			}
+
+			payload := mustMarshal(t, TaskPayload{AuditRunID: "run-1"})
+			task := &protocol.TaskPayload{TaskID: "t", TaskType: string(protocol.TaskTypeAudit), Payload: payload, Timestamp: time.Now()}
+			result, err := Run(context.Background(), task, RunOptions{NodeID: "n1"})
+			if err != nil {
+				t.Fatalf("Run err: %v", err)
+			}
+			if len(result.Findings) != 1 {
+				t.Fatalf("findings = %d want 1", len(result.Findings))
+			}
+			f := result.Findings[0]
+			if f.PreflightStatus != tc.wantStatus {
+				t.Errorf("preflight_status = %q want %q", f.PreflightStatus, tc.wantStatus)
+			}
+			switch {
+			case tc.wantReason == nil && f.PreflightReason != nil:
+				t.Errorf("preflight_reason = %q want nil", *f.PreflightReason)
+			case tc.wantReason != nil && f.PreflightReason == nil:
+				t.Errorf("preflight_reason = nil want %q", *tc.wantReason)
+			case tc.wantReason != nil && *f.PreflightReason != *tc.wantReason:
+				t.Errorf("preflight_reason = %q want %q", *f.PreflightReason, *tc.wantReason)
+			}
+		})
+	}
+}
+
+// Story 4-1 FINDING 2: lockout-sensitive (fail-closed) rules must map a preflight
+// error/panic/unknown-exit to "blocked" with the lockout-risk reason — the
+// opposite of the fail-open default verified by TestRun_PreflightExitCodeMapping.
+// Showing the password-disable fix on an unverifiable probe is a real lockout risk.
+func TestRun_PreflightFailClosed_LockoutSensitiveRuleBlocks(t *testing.T) {
+	cases := []struct {
+		name      string
+		preflight rules.PreflightFunc
+	}{
+		{
+			name:      "error_blocks",
+			preflight: func(context.Context) (int, string, error) { return 0, "", errors.New("probe boom") },
+		},
+		{
+			name:      "panic_blocks",
+			preflight: func(context.Context) (int, string, error) { panic("kaboom") },
+		},
+		{
+			name:      "unknown_exit_blocks",
+			preflight: func(context.Context) (int, string, error) { return 99, "ignored", nil },
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			setupTestRules(t)
+			failingCheck := func(context.Context) (bool, map[string]any, error) {
+				return false, map[string]any{"k": "v"}, nil
+			}
+			rules.RegisterLockoutSensitiveRuleWithPreflight("test.lockout", failingCheck, tc.preflight)
+
+			payload := mustMarshal(t, TaskPayload{AuditRunID: "run-1"})
+			task := &protocol.TaskPayload{TaskID: "t", TaskType: string(protocol.TaskTypeAudit), Payload: payload, Timestamp: time.Now()}
+			result, err := Run(context.Background(), task, RunOptions{NodeID: "n1"})
+			if err != nil {
+				t.Fatalf("Run err: %v", err)
+			}
+			if len(result.Findings) != 1 {
+				t.Fatalf("findings = %d want 1", len(result.Findings))
+			}
+			f := result.Findings[0]
+			if f.PreflightStatus != protocol.PreflightStatusBlocked {
+				t.Errorf("preflight_status = %q want %q (fail-closed)", f.PreflightStatus, protocol.PreflightStatusBlocked)
+			}
+			if f.PreflightReason == nil || *f.PreflightReason != lockoutPreflightUnverifiableReason {
+				got := "<nil>"
+				if f.PreflightReason != nil {
+					got = *f.PreflightReason
+				}
+				t.Errorf("preflight_reason = %q want lockout-risk guidance", got)
+			}
+		})
+	}
+}
+
+// Passing rules must produce NO finding, hence no preflight is run for them.
+func TestRun_PassingRule_NoPreflight(t *testing.T) {
+	setupTestRules(t)
+	preflightRan := false
+	rules.RegisterRuleWithPreflight("test.pass",
+		func(context.Context) (bool, map[string]any, error) { return true, nil, nil },
+		func(context.Context) (int, string, error) {
+			preflightRan = true
+			return rules.PreflightExitBlock, "x", nil
+		},
+	)
+	payload := mustMarshal(t, TaskPayload{AuditRunID: "run-1"})
+	task := &protocol.TaskPayload{TaskID: "t", TaskType: string(protocol.TaskTypeAudit), Payload: payload, Timestamp: time.Now()}
+	result, err := Run(context.Background(), task, RunOptions{NodeID: "n1"})
+	if err != nil {
+		t.Fatalf("Run err: %v", err)
+	}
+	if len(result.Findings) != 0 {
+		t.Fatalf("findings = %d want 0", len(result.Findings))
+	}
+	if preflightRan {
+		t.Error("preflight must NOT run for a passing rule")
+	}
+}
+
+func strPtr(s string) *string { return &s }
 
 func mustMarshal(t *testing.T, v any) []byte {
 	t.Helper()

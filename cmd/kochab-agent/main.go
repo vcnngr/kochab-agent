@@ -30,7 +30,7 @@ import (
 )
 
 // version is set at build time via -ldflags "-X main.version=..."
-var version = "0.1.0"
+var version = "0.4.0"
 
 // errNodeAlreadyDecommissioned is returned by run() when the decommissioned sentinel
 // file exists on startup. main() maps this to os.Exit(0) — systemd must not restart.

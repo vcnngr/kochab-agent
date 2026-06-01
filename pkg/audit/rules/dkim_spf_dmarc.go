@@ -10,7 +10,19 @@ import (
 const RuleCodeDKIMSPFDMARCBasic = "dkim_spf_dmarc.basic"
 
 func init() {
-	RegisterRule(RuleCodeDKIMSPFDMARCBasic, checkDKIMSPFDMARCBasic)
+	RegisterRuleWithPreflight(RuleCodeDKIMSPFDMARCBasic, checkDKIMSPFDMARCBasic, preflightDKIMSPFDMARCBasic)
+}
+
+// preflightDKIMSPFDMARCBasic is the READ-ONLY guardrail for the SPF/DMARC fix
+// (seed 007: `dpkg -l postfix exim4 opensmtpd ... || exit 2`). When no mail
+// server is installed the DNS-record fix is not applicable → skip (fix still
+// shown per contract). Otherwise publishing SPF/DMARC TXT records is always
+// safe to suggest → pass. Read-only: only checks for mail daemon binaries.
+func preflightDKIMSPFDMARCBasic(_ context.Context) (int, string, error) {
+	if !hasMailServer() {
+		return PreflightExitSkip, "", nil
+	}
+	return PreflightExitPass, "", nil
 }
 
 // hasMailServer detects an installed mail daemon. We skip the rule on hosts

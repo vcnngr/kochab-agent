@@ -107,6 +107,37 @@ type AuditResult struct {
 	CompletedAt  time.Time `json:"completed_at"`
 }
 
+// PreflightStatus is the outcome of a rule's read-only pre-flight check
+// (Story 4.1, AC-3/AC-4). The platform uses this to decide whether to render
+// fix_command_rendered (passed/skipped/none) or suppress it (blocked).
+//
+// Mapping from the preflight's exit code (read-only shell):
+//
+//	exit 0 => "passed"  — safe to suggest the fix.
+//	exit 1 => "blocked" — dangerous; suppress the fix; PreflightReason carries guidance.
+//	exit 2 => "skipped" — preflight not applicable → treated as a pass (fix IS shown).
+//	rule has no preflight => "none" — fix shown.
+//
+// The value is NEVER empty.
+type PreflightStatus string
+
+const (
+	PreflightStatusPassed  PreflightStatus = "passed"
+	PreflightStatusBlocked PreflightStatus = "blocked"
+	PreflightStatusSkipped PreflightStatus = "skipped"
+	PreflightStatusNone    PreflightStatus = "none"
+)
+
+// Valid reports whether the preflight status is a known value.
+func (p PreflightStatus) Valid() bool {
+	switch p {
+	case PreflightStatusPassed, PreflightStatusBlocked, PreflightStatusSkipped, PreflightStatusNone:
+		return true
+	default:
+		return false
+	}
+}
+
 // Finding represents a single audit finding.
 type Finding struct {
 	RuleCode        string         `json:"rule_code"`
@@ -115,6 +146,12 @@ type Finding struct {
 	Message         string         `json:"message"`
 	FixCommand      string         `json:"fix_command,omitempty"`
 	SeverityContext map[string]any `json:"severity_context,omitempty"`
+	// PreflightStatus is the outcome of the rule's read-only pre-flight check.
+	// Always set (defaults to "none" when the rule has no preflight). Story 4.1.
+	PreflightStatus PreflightStatus `json:"preflight_status"`
+	// PreflightReason is human-readable guidance shown when PreflightStatus ==
+	// "blocked" (e.g. "Prima configura l'accesso con chiave SSH"); nil otherwise.
+	PreflightReason *string `json:"preflight_reason"`
 }
 
 // EnrollmentRequest is the payload sent to the platform during enrollment.

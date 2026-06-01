@@ -19,13 +19,14 @@ import (
 // CheckFunc is the per-rule check signature.
 //
 // Returns:
-//   passed  — true if the host satisfies the rule.
-//   context — diagnostic key/value pairs to surface to the platform as
-//             severity_context (later consumed by Story 3.2 context-aware
-//             severity and the UI explanation panel of Story 3.4).
-//   err     — fatal error preventing evaluation. The runner converts these
-//             into a `severity=info` finding with the error text; the rule is
-//             effectively skipped.
+//
+//	passed  — true if the host satisfies the rule.
+//	context — diagnostic key/value pairs to surface to the platform as
+//	          severity_context (later consumed by Story 3.2 context-aware
+//	          severity and the UI explanation panel of Story 3.4).
+//	err     — fatal error preventing evaluation. The runner converts these
+//	          into a `severity=info` finding with the error text; the rule is
+//	          effectively skipped.
 //
 // Preflight conditions (file missing, command absent, etc.) should be modelled
 // by returning passed=true with context["skipped_reason"]="..." rather than an
@@ -33,11 +34,54 @@ import (
 // hosts (e.g. Docker absent → "docker.no_host_network" rule is vacuously OK).
 type CheckFunc func(ctx context.Context) (passed bool, context map[string]any, err error)
 
+// Pre-flight exit-code semantics (Story 4.1, seed 007 convention). A rule's
+// PreflightFunc is a READ-ONLY guardrail that decides whether the platform
+// should render the (copy-paste, human-applied) fix command. It NEVER mutates
+// the host and NEVER executes the fix.
+//
+//	PreflightExitPass    (0) => safe to suggest fix  -> protocol "passed"
+//	PreflightExitBlock   (1) => dangerous, suppress  -> protocol "blocked"
+//	PreflightExitSkip    (2) => not applicable, pass -> protocol "skipped"
+const (
+	PreflightExitPass  = 0
+	PreflightExitBlock = 1
+	PreflightExitSkip  = 2
+)
+
+// PreflightFunc is the per-rule read-only pre-flight check signature (Story 4.1,
+// recommended approach (a): preflight is part of the agent-side rule definition,
+// alongside Check). It runs ONLY when the rule has produced a finding (failed).
+//
+// Returns:
+//
+//	exitCode — one of PreflightExitPass/Block/Skip. Maps to preflight_status.
+//	reason   — human-readable guidance, surfaced as preflight_reason when the
+//	           exit code is PreflightExitBlock (ignored otherwise).
+//	err      — fatal error while evaluating the preflight. The runner treats a
+//	           preflight error conservatively as a pass (the fix is still shown)
+//	           so a flaky probe never silently suppresses a legitimate fix.
+//
+// SAFETY INVARIANT: a PreflightFunc MUST be read-only. No mutating exec.
+type PreflightFunc func(ctx context.Context) (exitCode int, reason string, err error)
+
 // Rule is a registered audit rule.
 type Rule struct {
 	Code  string
 	Check CheckFunc
+	// Preflight is an optional read-only guardrail run when the rule fails.
+	// nil => the rule has no preflight (preflight_status "none"). Story 4.1.
+	Preflight PreflightFunc
+	// FailClosed marks a lockout-sensitive rule: when its preflight errors,
+	// panics, or returns an unknown exit code, the runner maps the outcome to
+	// "blocked" (fix suppressed) instead of the default "passed". This protects
+	// guardrails like ssh.disable_password_auth where SHOWING the fix on an
+	// unverifiable probe carries real lockout risk. Default false (fail-open):
+	// for ordinary rules a flaky probe must not hide a legitimate fix.
+	FailClosed bool
 }
+
+// HasPreflight reports whether this rule defines a pre-flight check.
+func (r Rule) HasPreflight() bool { return r.Preflight != nil }
 
 var (
 	mu       sync.RWMutex
@@ -47,6 +91,26 @@ var (
 // RegisterRule adds a rule to the registry. Panics on duplicate code so that
 // init-time conflicts surface at agent boot rather than silently overwriting.
 func RegisterRule(code string, fn CheckFunc) {
+	registerRule(code, fn, nil, false)
+}
+
+// RegisterRuleWithPreflight registers a rule that also defines a read-only
+// pre-flight guardrail (Story 4.1). The preflight runs only when the rule
+// fails; it MUST be read-only (no mutating exec, never applies the fix). The
+// preflight is fail-open: an error/panic/unknown exit degrades to "passed".
+func RegisterRuleWithPreflight(code string, fn CheckFunc, pre PreflightFunc) {
+	registerRule(code, fn, pre, false)
+}
+
+// RegisterLockoutSensitiveRuleWithPreflight registers a rule whose preflight is
+// a LOCKOUT GUARDRAIL (e.g. ssh.disable_password_auth). Unlike the fail-open
+// default, its preflight is fail-closed: an error/panic/unknown exit maps to
+// "blocked" so the dangerous fix is never shown on an unverifiable probe.
+func RegisterLockoutSensitiveRuleWithPreflight(code string, fn CheckFunc, pre PreflightFunc) {
+	registerRule(code, fn, pre, true)
+}
+
+func registerRule(code string, fn CheckFunc, pre PreflightFunc, failClosed bool) {
 	mu.Lock()
 	defer mu.Unlock()
 	if _, exists := registry[code]; exists {
@@ -55,7 +119,7 @@ func RegisterRule(code string, fn CheckFunc) {
 	if fn == nil {
 		panic(fmt.Sprintf("audit rules: nil CheckFunc for rule_code %q", code))
 	}
-	registry[code] = Rule{Code: code, Check: fn}
+	registry[code] = Rule{Code: code, Check: fn, Preflight: pre, FailClosed: failClosed}
 }
 
 // All returns rules sorted by code, deterministic ordering for tests.

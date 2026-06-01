@@ -2,13 +2,26 @@ package rules
 
 import (
 	"context"
+	"os/exec"
 	"strings"
 )
 
 const RuleCodeDockerNoHostNetwork = "docker.no_host_network"
 
 func init() {
-	RegisterRule(RuleCodeDockerNoHostNetwork, checkDockerNoHostNetwork)
+	RegisterRuleWithPreflight(RuleCodeDockerNoHostNetwork, checkDockerNoHostNetwork, preflightDockerNoHostNetwork)
+}
+
+// preflightDockerNoHostNetwork is the READ-ONLY guardrail for the
+// "no host-network container" fix (seed 007: `command -v docker ... || exit 2`).
+// If docker isn't installed the fix is not applicable → skip (fix still shown,
+// per contract). Otherwise the fix (recreate containers without --network=host)
+// is always safe to suggest as copy-paste → pass. Read-only: only LookPath.
+func preflightDockerNoHostNetwork(_ context.Context) (int, string, error) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		return PreflightExitSkip, "", nil
+	}
+	return PreflightExitPass, "", nil
 }
 
 // checkDockerNoHostNetwork iterates `docker ps` and reports any running

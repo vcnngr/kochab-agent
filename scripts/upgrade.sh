@@ -91,7 +91,10 @@ main() {
     install -m 755 "${tmp_dir}/${asset}" "$BINARY_PATH"
 
     log "Restart servizio (enrollment ${CONFIG_DIR} preservato)..."
-    systemctl restart kochab-agent
+    # NON-guarded restart + set -e uscirebbe PRIMA del blocco rollback se il
+    # restart fallisce (binario nuovo che non parte). `|| true` garantisce di
+    # raggiungere sempre la verifica is-active + il rollback automatico sotto.
+    systemctl restart kochab-agent || true
 
     # Verifica: attivo + nessun crash entro pochi secondi.
     sleep 4

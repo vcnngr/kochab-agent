@@ -145,7 +145,11 @@ RestartPreventExitStatus=70
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ProtectHome=true
+# read-only (non true): il preflight SSH lockout (Story 4-1) deve LEGGERE
+# /root/.ssh e /home/*/.ssh per rilevare le chiavi autorizzate. ProtectHome=true
+# le nasconde → falso "Fix bloccato — nessuna chiave" su ogni nodo con chiavi.
+# read-only consente la lettura mantenendo le home non scrivibili.
+ProtectHome=read-only
 PrivateTmp=true
 ReadWritePaths=/etc/kochab
 
